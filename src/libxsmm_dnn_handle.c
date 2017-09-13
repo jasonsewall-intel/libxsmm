@@ -1498,6 +1498,8 @@ LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_internal_create_conv_handle
           handle->scratch4 = 0;
           handle->scratch4_size = handle->desc.threads * handle->blocksifm * handle->ifmblock * handle->blocksofm * handle->ofmblock
             * handle->desc.R * handle->desc.S * handle->fm_lp_block * libxsmm_dnn_typesize(handle->datatype);
+          handle->scratch4_size += handle->desc.threads * handle->block_upd_ofm * handle->block_upd_ifm * handle->desc.R
+            * handle->desc.S * handle->ifmblock * handle->ofmblock * libxsmm_dnn_typesize(handle->datatype);
 
           /* enable external reduce of filter scratch */
           if ( (handle->options & LIBXSMM_DNN_CONV_OPTION_WU_EXT_FILTER_REDUCE) > 0 ) {
@@ -1566,7 +1568,6 @@ LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_internal_create_conv_handle
 
       return status;
     }
-
 
     /* This function finds the prime factors of a number */
     LIBXSMM_API_INLINE void internal_dnn_handle_factors(

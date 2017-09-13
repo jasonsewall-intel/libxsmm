@@ -26,7 +26,7 @@
  ** NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS        **
  ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.              **
  ******************************************************************************/
-/* Evangelos Georganas (Intel Corp.)
+/* Evangelos Georganas, John Pennycook (Intel Corp.)
  ******************************************************************************/
 #if !defined(_OPENMP)
 int ltid;
@@ -141,7 +141,7 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                       oi_=oi__*handle->upd_ofw_rb;
                       ii_ = oi_*stride_w;
                       ij_ = oj_*stride_h;
-                      local_entries += 3;
+                      local_entries += 4;
                     }
                   }
                 }
@@ -155,10 +155,10 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
 
 
   /* Alocate auxiliary data structures for index jitting  */
-  handle->n_entries_upd[ltid] = local_entries/3;
-  compute_indices = (int*) libxsmm_aligned_malloc( (local_entries+3) * sizeof(int), 64);
+  handle->n_entries_upd[ltid] = local_entries/4;
+  compute_indices = (int*) libxsmm_aligned_malloc( (local_entries+4) * sizeof(int), 64);
   handle->compute_upd_indices_ptrs[ltid] = compute_indices;
-  kernel_variant = (char*) libxsmm_aligned_malloc( (local_entries/3) * sizeof(char), 64);
+  kernel_variant = (char*) libxsmm_aligned_malloc( (local_entries/4) * sizeof(char), 64);
   handle->kernel_upd_variant_ptrs[ltid] = kernel_variant;
   handle->n_upd_code_segments[ltid] = n_code_segments;
 
@@ -187,9 +187,16 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                       } else {
                         compute_indices[local_entries] =  ( ( ( ( ( (img *  handle->blocksifm) +  ifm1) * padded_h )  +  (ij_+kj)) * padded_w)  + (ii_ + ki) ) *  handle->ifmblock;
                       }
-                      compute_indices[local_entries+1] = ( (ofm1 *  handle->blocksifm )  +  ifm1 ) * handle->desc.R * handle->desc.S *  handle->ifmblock *  handle->ofmblock + kj * handle->desc.S *  handle->ifmblock *  handle->ofmblock + ki * handle->ifmblock *  handle->ofmblock;
+                      compute_indices[local_entries+1] = ( ( (ofm1-ofmb) * handle->block_upd_ifm ) + (ifm1-ifmb) ) * handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock + kj * handle->desc.S *  handle->ifmblock *  handle->ofmblock + ki * handle->ifmblock *  handle->ofmblock;
                       compute_indices[local_entries+2] = ( ( ( ( ( (img *  handle->blocksofm) +  ofm1) *  handle->ofhp )  +  oj_ ) * handle->ofwp)  +  oi_ ) *  handle->ofmblock;
-                      local_entries += 3;
+
+                      /* mark the last iteration of this (ofm1,ifm1) in the stream */
+                      if ( (ki+1 >= KW) && (kj+1 >= kh) && (oi__+1 >= num_ofw_strips) && (oj_+handle->upd_ofh_rb >= LIBXSMM_MIN(ojb+block_j,handle->ofh)) && (ojb+block_j >= handle->ofh) ) {
+                        compute_indices[local_entries+3] = (ofm1 * handle->blocksifm + ifm1) * handle->desc.R * handle->desc.S * handle->ifmblock;
+                      } else {
+                        compute_indices[local_entries+3] = -1;
+                      }
+                      local_entries += 4;
                     }
                   }
                 }
@@ -204,6 +211,7 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
   compute_indices[local_entries] = 0;
   compute_indices[local_entries+1] = 0;
   compute_indices[local_entries+2] = 0;
+  compute_indices[local_entries+3] = 0;
 
 }
 
