@@ -31,6 +31,7 @@
 #include "libxsmm_dnn_convolution_weight_update.h"
 #include <libxsmm_intrinsics_x86.h>
 #include "libxsmm_main.h"
+#include "stdio.h"
 
 #if defined(LIBXSMM_OFFLOAD_TARGET)
 # pragma offload_attribute(push,target(LIBXSMM_OFFLOAD_TARGET))
@@ -41,7 +42,7 @@
 #endif
 
 #if defined(__AVX512F__)
-void gather_transpose_ps_16_56_56_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_56_56_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   const __mmask16 Nremmask = 0x00FF;
   int m;
@@ -58,7 +59,7 @@ void gather_transpose_ps_16_56_56_16(float *__restrict__ dst, const float *__res
   }
 }
 
-void gather_transpose_ps_16_58_58_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_58_58_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   const __mmask16 Nremmask = 0x03FF;
   int m;
@@ -75,7 +76,7 @@ void gather_transpose_ps_16_58_58_16(float *__restrict__ dst, const float *__res
   }
 }
 
-void gather_transpose_ps_16_28_28_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_28_28_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   const __mmask16 Nremmask = 0x0FFF;
   int m;
@@ -90,7 +91,7 @@ void gather_transpose_ps_16_28_28_16(float *__restrict__ dst, const float *__res
   }
 }
 
-void gather_transpose_ps_16_30_30_16(float *__restrict__ dst, const float *__restrict__ src)
+void gather_transpose_ps_16_30_30_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS)
 {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   const __mmask16 Nremmask = 0x3FFF;
@@ -106,7 +107,7 @@ void gather_transpose_ps_16_30_30_16(float *__restrict__ dst, const float *__res
   }
 }
 
-void gather_transpose_ps_16_16_16_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_16_16_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   int m;
   #pragma unroll_and_jam(4)
@@ -117,7 +118,7 @@ void gather_transpose_ps_16_16_16_16(float *__restrict__ dst, const float *__res
   }
 }
 
-void gather_transpose_ps_16_18_18_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_18_18_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   const __mmask16 Nremmask = 0x0003;
   int m;
@@ -132,7 +133,7 @@ void gather_transpose_ps_16_18_18_16(float *__restrict__ dst, const float *__res
   }
 }
 
-void gather_transpose_ps_16_8_8_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_8_8_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(113,97,81,65,49,33,17,1,
                                           112,96,80,64,48,32,16,0);
   int m;
@@ -143,7 +144,7 @@ void gather_transpose_ps_16_8_8_16(float *__restrict__ dst, const float *__restr
   }
 }
 
-void gather_transpose_ps_16_10_10_16(float *__restrict__ dst, const float *__restrict__ src) {
+void gather_transpose_ps_16_10_10_16(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
   const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
   const __mmask16 Nremmask = 0x03FF;
   int m;
@@ -154,33 +155,45 @@ void gather_transpose_ps_16_10_10_16(float *__restrict__ dst, const float *__res
     _mm512_mask_store_ps((void*)(dst+m*10+n*16),Nremmask,tmprem);
   }
 }
+#endif //defined(__AVX512F__)
 
-typedef void (*transposer)(float *__restrict__ dst, const float *__restrict__ src);
+void transpose_fallback(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS) {
+  int n, m;
+  for (n = 0; n < N; ++n) {
+    for (m = 0; m < M; ++m) {
+      dst[m*ldD + n] = src[n*ldS + m];
+    }
+  }
+}
+
+typedef void (*transposer)(int M, int N, float *__restrict__ dst, int ldD, float *__restrict__ src, int ldS);
 
 transposer get_transposer(int M, int N, int ldD, int ldS) {
-  if(ldS != 16 || M != 16)
-    return 0;
+  #if defined(__AVX512F__)
+  if(M == 16 && ldS == 16)
+  {
+    if(ldD == 56 && N == 56)
+      return gather_transpose_ps_16_56_56_16;
+    if(ldD == 58 && N == 58)
+      return gather_transpose_ps_16_58_58_16;
+    if(ldD == 28 && N == 28)
+      return gather_transpose_ps_16_28_28_16;
+    if(ldD == 30 && N == 30)
+      return gather_transpose_ps_16_30_30_16;
+    if(ldD == 16 && N == 16)
+      return gather_transpose_ps_16_16_16_16;
+    if(ldD == 18 && N == 18)
+      return gather_transpose_ps_16_18_18_16;
+    if(ldD == 8 && N == 8)
+      return gather_transpose_ps_16_8_8_16;
+    if(ldD == 10 && N == 10)
+      return gather_transpose_ps_16_10_10_16;
+  }
+  #endif // defined(__AVX512F__)
 
-  if(ldD == 56 && N == 56)
-    return gather_transpose_ps_16_56_56_16;
-  if(ldD == 58 && N == 58)
-    return gather_transpose_ps_16_58_58_16;
-  if(ldD == 28 && N == 28)
-    return gather_transpose_ps_16_28_28_16;
-  if(ldD == 30 && N == 30)
-    return gather_transpose_ps_16_30_30_16;
-  if(ldD == 16 && N == 16)
-    return gather_transpose_ps_16_16_16_16;
-  if(ldD == 18 && N == 18)
-    return gather_transpose_ps_16_18_18_16;
-  if(ldD == 8 && N == 8)
-    return gather_transpose_ps_16_8_8_16;
-  if(ldD == 10 && N == 10)
-    return gather_transpose_ps_16_10_10_16;
-
-  return 0;
+  // Return this if not running avx512 or if running avx512 and can't find match
+  return transpose_fallback;
 }
-#endif //defined(__AVX_512F__)
 
 LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_convolve_st_upd_custom_custom(libxsmm_dnn_layer* handle, int start_thread, int tid)
 {
