@@ -26,11 +26,13 @@
  ** NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS        **
  ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.              **
  ******************************************************************************/
-/* Evangelos Georganas, John Pennycook (Intel Corp.)
- ******************************************************************************/
+/* Evangelos Georganas, John Pennycook, Jason Sewall (Intel Corp.)
+******************************************************************************/
 #define WEIGHT_INIT 0
 #define UPDATE_KERNEL 1
 #define WEIGHT_COPY 2
+#define TRANSPOSE_EXEC 3
+#define LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT 12
 
 #if !defined(_OPENMP)
 int ltid;
@@ -161,6 +163,11 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                       ij_ = oj_*stride_h;
                       local_entries += 3;
 
+                      /* For transpose: Find first (img,ifmb) in this stream. Occurs when ofmb == 0. */
+                      if ( (ofmb == 0) && (ojb == 0) && (ofm1 == ofmb) && (ifm1 == ifmb) && (oj_ == ojb) && (oi__ == 0) && (kj == 0) && (ki == 0)) {
+                        n_code_segments++;
+                      }
+
                       if (mark_weight_init == 1) {
                         if ( (ki == 0) && (kj == 0) && (oi__ == 0) && (oj_ == ojb) && (ojb == 0) ) {
                           n_code_segments++;
@@ -219,6 +226,12 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                       oi_=oi__*handle->upd_ofw_rb;
                       ii_ = oi_*stride_w;
                       ij_ = oj_*stride_h;
+
+                      /* For transpose: Find first (img,ifmb) in this stream. Occurs when ofmb == 0. */
+                      if ( (ofmb == 0) && (ojb == 0) && (ofm1 == ofmb) && (ifm1 == ifmb) && (oj_ == ojb) && (oi__ == 0) && (kj == 0) && (ki == 0)) {
+                        tmp_expanded_stream[tmp_stream_index] = TRANSPOSE_EXEC;
+                        tmp_stream_index++;
+                      }
 
                       if (mark_weight_init == 1) {
                         if ( (ki == 0) && (kj == 0) && (oi__ == 0) && (oj_ == ojb) && (ojb == 0) ) {
@@ -308,6 +321,14 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                         oi_=oi__*handle->upd_ofw_rb;
                         ii_ = oi_*stride_w;
                         ij_ = oj_*stride_h;
+
+                        /* For transpose: Find first (img,ifmb) in this stream. Occurs when ofmb == 0. */
+                        if ( (ofmb == 0) && (ojb == 0) && (ofm1 == ofmb) && (ifm1 == ifmb) && (oj_ == ojb) && (oi__ == 0) && (kj == 0) && (ki == 0)) {
+                          assert(img < (1 << LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT));
+                          assert(ifmb < (1 << (31-LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT)));
+                          encoded_code_segments[encoded_stream_index].aux_index = img + (ifmb << LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT);
+                          encoded_stream_index++;
+                        }
 
                         if (mark_weight_init == 1) {
                           if ( (ki == 0) && (kj == 0) && (oi__ == 0) && (oj_ == ojb) && (ojb == 0) ) {
