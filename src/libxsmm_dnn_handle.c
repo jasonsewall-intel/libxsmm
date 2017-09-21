@@ -1226,6 +1226,7 @@ LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_internal_create_conv_handle
         descriptor.datatype_itm = handle->datatype_itm;
         descriptor.option = handle->desc.options;
         descriptor.format = (libxsmm_dnn_tensor_format)(handle->buffer_format | handle->filter_format);
+        descriptor.ncopies = handle->desc.threads;
 
         /* TODO check JIT errors */
         if ( /*(*/libxsmm_target_archid == LIBXSMM_X86_AVX512_MIC  ||
@@ -1314,7 +1315,7 @@ LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_internal_create_conv_handle
                 descriptor.ofh_rb--;
               }
 
-              descriptor.use_nts = 0;
+              descriptor.use_nts = 1;
               descriptor.blocks_h = handle->ofh / descriptor.ofh_rb;
               handle->upd_ofh_rb = descriptor.ofh_rb * descriptor.blocks_h;
               handle->upd_ofw_rb = kernel_ofw;
