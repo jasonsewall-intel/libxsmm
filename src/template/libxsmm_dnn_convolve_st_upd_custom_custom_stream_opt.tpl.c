@@ -26,11 +26,13 @@
  ** NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS        **
  ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.              **
  ******************************************************************************/
-/* Evangelos Georganas, John Pennycook (Intel Corp.)
- ******************************************************************************/
+/* Evangelos Georganas, John Pennycook, Jason Sewall (Intel Corp.)
+******************************************************************************/
 #define WEIGHT_INIT 0
 #define UPDATE_KERNEL 1
 #define WEIGHT_COPY 2
+#define TRANSPOSE_EXEC 3
+#define LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT 12
 
 /* computing first logical thread */
 const int ltid = tid-start_thread;
@@ -38,6 +40,7 @@ const int ltid = tid-start_thread;
 /* Auxiliary integer variables   */
 int img, ifm1, ifm2, imgifm1,ii, ij, i;
 int j, k;
+int ifmb;
 
 int imgpt = (handle->desc.N + handle->desc.threads - 1)/handle->desc.threads;
 int my_img_start = LIBXSMM_MIN( ltid * imgpt, handle->desc.N);
@@ -78,7 +81,7 @@ LIBXSMM_VLA_DECL(5, element_input_type, tr_input_nopad, (element_input_type*)han
 /* Stream related variables  */
 segment_t *code_stream;
 int *stream = handle->compute_upd_indices_ptrs[ltid];
-int instr, n_segments, n_convs, conv_i, offset_i, offset_o, offset_w, offset_s, pi, po, pw, pc;
+int instr, n_segments, n_convs, conv_i, offset_i, offset_t, offset_o, offset_w, offset_s, pi, po, pw, pc;
 
 /* Base pointers  */
 const element_input_type *input_base;
@@ -120,51 +123,6 @@ if (handle->padding_flag == 1) {
 }
 #endif
 
-/* Handle transpose of input  */
-if ( handle->trans_ofw_ifm > 0 ) {
-  if (handle->padding_flag == 1) {
-    /* Transpose IFW and IFM into the padded buffer!*/
-    for (img = my_img_start; img < my_img_end; img++) {
-      for (ifm1 = 0; ifm1 < handle->blocksifm; ifm1++) {
-        for (ij=0; ij < handle->ifhp; ++ij) {
-          for (ii=0; ii < handle->ifwp; ++ii) {
-            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
-              LIBXSMM_VLA_ACCESS(5, tr_input_padded, img, ifm1, ij + handle->desc.pad_h, ifm2, ii + handle->desc.pad_w, handle->blocksifm, padded_h, handle->ifmblock, ifwp_extended)
-                =  LIBXSMM_VLA_ACCESS(5, input_nopad, img, ifm1, ij, ii, ifm2, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock);
-            }
-          }
-          /*for (ii=0; ii < handle->qfma_input_pad; ++ii) {
-            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
-              LIBXSMM_VLA_ACCESS(5, tr_input_padded, img, ifm1, ij + handle->desc.pad_h, ifm2, ii + 2*handle->desc.pad_w + handle->ifwp, handle->blocksifm, padded_h, handle->ifmblock, ifwp_extended)
-                = (element_input_type)0;
-            }
-          }*/
-        }
-      }
-    }
-  } else {
-    /* Transpose IFW and IFM */
-    for (img = my_img_start; img < my_img_end; img++) {
-      for (ifm1 = 0; ifm1 < handle->blocksifm; ifm1++) {
-        for (ij=0; ij < handle->ifhp; ++ij) {
-          for (ii=0; ii < handle->ifwp; ++ii) {
-            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
-              LIBXSMM_VLA_ACCESS(5, tr_input_nopad, img, ifm1, ij, ifm2, ii, handle->blocksifm, handle->ifhp, handle->ifmblock, ifwp_extended)
-                =  LIBXSMM_VLA_ACCESS(5, input_nopad, img, ifm1, ij, ii, ifm2, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock);
-            }
-          }
-          /*for (ii=0; ii < handle->qfma_input_pad; ii++) {
-            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
-              LIBXSMM_VLA_ACCESS(5, tr_input_nopad, img, ifm1, ij, ifm2, ii+handle->ifwp, handle->blocksifm, handle->ifhp, handle->ifmblock, ifwp_extended)
-                = (element_input_type)0;
-            }
-          }*/
-        }
-      }
-    }
-  }
-}
-
 /* Initialize base pointers */
 if (handle->padding_flag == 1) {
   if (handle->trans_ofw_ifm > 0) {
@@ -197,6 +155,49 @@ if (n_segments) {
   for (pc = 0; pc < n_segments; pc++) {
     instr = code_stream[pc].segment_type;
     n_convs = code_stream[pc].n_convs;
+
+    if (instr == TRANSPOSE_EXEC) {
+      offset_t = code_stream[pc].aux_index;
+      img = offset_t & ((1 << LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT)-1);
+      ifmb = offset_t >> LIBXSMM_UPD_STREAMS_TRANSPOSE_IFMB_SHIFT;
+      if ( handle->trans_ofw_ifm > 0 ) {
+        if (handle->padding_flag == 1) {
+          /* Transpose IFW and IFM into the padded buffer!*/
+          for (ifm1 = ifmb; ifm1 < LIBXSMM_MIN(ifmb+handle->block_upd_ifm, handle->blocksifm); ifm1++) {
+            for (ij=0; ij < handle->ifhp; ++ij) {
+              float *dst = &(LIBXSMM_VLA_ACCESS(5, tr_input_padded, img, ifm1, ij + handle->desc.pad_h, 0, 0 + handle->desc.pad_w, handle->blocksifm, padded_h, handle->ifmblock, ifwp_extended));
+              const float *src = &(LIBXSMM_VLA_ACCESS(5, input_nopad, img, ifm1, ij, 0, 0, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock));
+              #if defined(__AVX512F__)
+              block_gather_transpose_ps(handle->ifmblock, handle->ifwp, dst, ifwp_extended, src, handle->ifmblock);
+              #else
+              for (ii=0; ii < handle->ifwp; ++ii) {
+                for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+                  dst[ifm2*ifwp_extended + ii] = src[ii*handle->ifmblock + ifm2];
+                }
+              }
+              #endif //defined(__AVX512F__)
+            }
+          }
+        } else {
+          /* Transpose IFW and IFM */
+          for (ifm1 = ifmb; ifm1 < LIBXSMM_MIN(ifmb+handle->block_upd_ifm, handle->blocksifm); ifm1++) {
+            for (ij=0; ij < handle->ifhp; ++ij) {
+              float *dst = &(LIBXSMM_VLA_ACCESS(5, tr_input_nopad, img, ifm1, ij, 0, 0, handle->blocksifm, handle->ifhp, handle->ifmblock, ifwp_extended));
+              const float *src = &(LIBXSMM_VLA_ACCESS(5, input_nopad, img, ifm1, ij, 0, 0, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock));
+              #if defined(__AVX512F__)
+              block_gather_transpose_ps(handle->ifmblock, handle->ifwp, dst, ifwp_extended, src, handle->ifmblock);
+              #else
+              for (ii=0; ii < handle->ifwp; ++ii) {
+                for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+                  dst[ifm2*ifwp_extended + ii] = src[ii*handle->ifmblock + ifm2];
+                }
+              }
+              #endif //defined(__AVX512F__)
+            }
+          }
+        }
+      }
+    }
 
     if (instr == WEIGHT_INIT) {
       offset_w = code_stream[pc].aux_index;
