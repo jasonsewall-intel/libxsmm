@@ -28,6 +28,9 @@
  ******************************************************************************/
 /* Evangelos Georganas, John Pennycook (Intel Corp.)
  ******************************************************************************/
+#define WEIGHT_INIT 0
+#define UPDATE_KERNEL 1
+#define WEIGHT_COPY 2
 
 /* computing first logical thread */
 const int ltid = tid-start_thread;
@@ -73,8 +76,9 @@ LIBXSMM_VLA_DECL(5, element_input_type, input_padded, (element_input_type*)handl
 LIBXSMM_VLA_DECL(5, element_input_type, tr_input_nopad, (element_input_type*)handle->scratch3, handle->blocksifm, handle->ifhp, handle->ifmblock, ifwp_extended);
 
 /* Stream related variables  */
+segment_t *code_stream;
 int *stream = handle->compute_upd_indices_ptrs[ltid];
-int instr, offset_i, offset_o, offset_w, offset_s, pi, po, pw, pc;
+int instr, n_segments, n_convs, conv_i, offset_i, offset_o, offset_w, offset_s, pi, po, pw, pc;
 
 /* Base pointers  */
 const element_input_type *input_base;
@@ -179,46 +183,66 @@ if (handle->padding_flag == 1) {
 weight_base = &LIBXSMM_VLA_ACCESS(2, per_thread_weight, 0, 0, handle->ofmblock); /* TODO: Replace with stack storage? */
 output_base = &LIBXSMM_VLA_ACCESS(5, output, 0, 0, 0, 0, 0, handle->blocksofm, handle->ofhp, handle->ofwp, handle->ofmblock);
 
-/* We DO USE private weights, initialize them to zero...  */
-for ( j = 0; j < handle->block_upd_ofm*handle->block_upd_ifm*handle->desc.R*handle->desc.S*handle->ifmblock; j++ ) {
-  LIBXSMM_PRAGMA_VALIGNED
-  LIBXSMM_PRAGMA_SIMD
-  for ( k = 0; k < 16; k++ ) {
-    weight_base[j*16 + k] = 0;
-  }
-}
-
 i = 0;
 instr = handle->n_entries_upd[ltid];
-/* Run the stream of convolutions, no extra operations are required...  */
-for (pc = 0; pc < instr; pc++) {
-  offset_i = stream[i];
-  offset_w = stream[i+1];
-  offset_o = stream[i+2];
-  offset_s = stream[i+3];
-  pi = stream[i+4];
-  pw = stream[i+5];
-  po = stream[i+6];
-  kernel( input_base + offset_i, weight_base + offset_w, output_base + offset_o, input_base + pi, weight_base + pw, output_base + po ); /* TODO: Don't prefetch weight_base */
-  i+=4;
+n_segments = handle->n_upd_code_segments[ltid];
+if (n_segments) {
+  /* We have segmented the stream of convolutions since we need to inject different functionalities... */
+  code_stream = handle->upd_code_segments[ltid];
+  for (pc = 0; pc < n_segments; pc++) {
+    instr = code_stream[pc].segment_type;
+    n_convs = code_stream[pc].n_convs;
 
-  /* if block is complete, stream final weights from scratch space to reduction space */
-  if ( offset_s >= 0 ) {
-    offset_w /= handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock;
-    offset_w *= handle->desc.R * handle->desc.S * handle->ifmblock;
-    for ( j = 0; j < handle->desc.R*handle->desc.S*handle->ifmblock; j++ ) {
-      LIBXSMM_PRAGMA_NONTEMPORAL
-      LIBXSMM_PRAGMA_VALIGNED
-      LIBXSMM_PRAGMA_SIMD
-      for ( k = 0; k < 16; k++ ) {
-        LIBXSMM_VLA_ACCESS(3, reduction_weight, offset_s + j, ltid, k, handle->desc.threads, 16) = LIBXSMM_VLA_ACCESS(2, per_thread_weight, offset_w + j, k, 16);
-      }
-      LIBXSMM_PRAGMA_VALIGNED
-      LIBXSMM_PRAGMA_SIMD
-      for ( k = 0; k < 16; k++ ) {
-        LIBXSMM_VLA_ACCESS(2, per_thread_weight, offset_w + j, k, 16) = 0;
+    if (instr == WEIGHT_INIT) {
+      offset_w = code_stream[pc].aux_index;
+      for ( j = offset_w; j < offset_w + handle->desc.R*handle->desc.S*handle->ifmblock*handle->ofmblock; j += 16) {
+        LIBXSMM_PRAGMA_VALIGNED
+        LIBXSMM_PRAGMA_SIMD
+        for ( k = 0; k < 16; ++k ) {
+          weight_base[j + k] = (element_filter_type) 0;
+        }
       }
     }
+
+    // TODO: Does this need to go after or before the convolution stream?
+    if (instr == WEIGHT_COPY) {
+      offset_w /= handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock;
+      offset_w *= handle->desc.R * handle->desc.S * handle->ifmblock;
+      offset_s = code_stream[pc].aux_index;
+      for ( j = 0; j < handle->desc.R*handle->desc.S*handle->ifmblock; j++ ) {
+        LIBXSMM_PRAGMA_NONTEMPORAL
+        LIBXSMM_PRAGMA_VALIGNED
+        LIBXSMM_PRAGMA_SIMD
+        for ( k = 0; k < 16; k++ ) {
+          LIBXSMM_VLA_ACCESS(3, reduction_weight, offset_s + j, ltid, k, handle->desc.threads, 16) = LIBXSMM_VLA_ACCESS(2, per_thread_weight, offset_w + j, k, 16);
+        }
+      }
+    }
+
+    /* Run the stream of convolutions for this segment */
+    for (conv_i = 0; conv_i < n_convs; conv_i++) {
+      offset_i = stream[i];
+      offset_w = stream[i+1];
+      offset_o = stream[i+2];
+      pi = stream[i+3];
+      pw = stream[i+4];
+      po = stream[i+5];
+      kernel( input_base + offset_i, weight_base + offset_w, output_base + offset_o, input_base + pi, weight_base + pw, output_base + po );
+      i+=3;
+    }
+  }
+} else {
+  /* Run the stream of convolutions, no extra operations are required...  */
+  for (pc = 0; pc < instr; pc++)
+  {
+      offset_i = stream[i];
+      offset_w = stream[i+1];
+      offset_o = stream[i+2];
+      pi = stream[i+3];
+      pw = stream[i+4];
+      po = stream[i+5];
+      kernel( input_base + offset_i, weight_base + offset_w, output_base + offset_o, input_base + pi, weight_base + pw, output_base + po );
+      i+=3;
   }
 }
 
