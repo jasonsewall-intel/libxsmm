@@ -41,29 +41,146 @@
 #endif
 
 #if defined(__AVX512F__)
-inline void block_gather_transpose_ps(int M, int N, float *__restrict__ dst, const int ldD, const float *__restrict__ src, const int ldS) {
-  const __m512i vindex_base = _mm512_set_epi32(15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0);
-  const __m512i vindex = _mm512_mullo_epi32(_mm512_set1_epi32(ldS), vindex_base);
-
-  const int whole16s = N/16;
-  const int remainder = N-whole16s*16;
-  const __mmask16 Nmask = (1<<remainder)-1;
-  __m512 res;
-  int i,j;
-  #pragma unroll(2)
-  for(i = 0; i < M; ++i) {
-    #pragma unroll(4)
-    for(j = 0; j < whole16s; ++j) {
-      res = _mm512_i32gather_ps(vindex, src+i+j*16*ldS, 4);
-      _mm512_store_ps(dst + ldD*i+j*16, res);
+void gather_transpose_ps_16_56_56_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  const __mmask16 Nremmask = 0x00FF;
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m){
+    int n;
+    #pragma unroll(3)
+    for(n = 0; n < 3; ++n) {
+      const __m512 tmp =  _mm512_i32gather_ps(vindex, src+m+n*256, 4);
+      _mm512_store_ps((void*)(dst+m*56+n*16),tmp);
     }
-    if(remainder) {
-      res = _mm512_mask_i32gather_ps(_mm512_undefined(), Nmask, vindex, src+i+j*16*ldS, 4);
-      _mm512_mask_store_ps(dst + ldD*i+j*16, Nmask, res);
-    }
+    const __m512 tmprem =  _mm512_mask_i32gather_ps(_mm512_undefined(), Nremmask, vindex, src+m+n*256, 4);
+    _mm512_mask_store_ps((void*)(dst+m*56+n*16),Nremmask,tmprem);
   }
 }
-#endif
+
+void gather_transpose_ps_16_58_58_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  const __mmask16 Nremmask = 0x03FF;
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m) {
+    int n;
+    #pragma unroll(3)
+    for(n = 0; n < 3; ++n) {
+      const __m512 tmp =  _mm512_i32gather_ps(vindex, src+m+n*256, 4);
+      _mm512_store_ps((void*)(dst+m*58+n*16),tmp);
+    }
+    const __m512 tmprem =  _mm512_mask_i32gather_ps(_mm512_undefined(), Nremmask, vindex, src+m+n*256, 4);
+    _mm512_mask_store_ps((void*)(dst+m*58+n*16),Nremmask,tmprem);
+  }
+}
+
+void gather_transpose_ps_16_28_28_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  const __mmask16 Nremmask = 0x0FFF;
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m) {
+    int n = 0;
+    const __m512 tmp =  _mm512_i32gather_ps(vindex, src+m+n*256, 4);
+    _mm512_store_ps((void*)(dst+m*28+n*16),tmp);
+    n = 1;
+    const __m512 tmprem =  _mm512_mask_i32gather_ps(_mm512_undefined(), Nremmask, vindex, src+m+n*256, 4);
+    _mm512_mask_store_ps((void*)(dst+m*28+n*16),Nremmask,tmprem);
+  }
+}
+
+void gather_transpose_ps_16_30_30_16(float *__restrict__ dst, const float *__restrict__ src)
+{
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  const __mmask16 Nremmask = 0x3FFF;
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m) {
+    int n = 0;
+    const __m512 tmp =  _mm512_i32gather_ps(vindex, src+m+n*256, 4);
+    _mm512_store_ps((void*)(dst+m*30+n*16),tmp);
+    n = 1;
+    const __m512 tmprem =  _mm512_mask_i32gather_ps(_mm512_undefined(), Nremmask, vindex, src+m+n*256, 4);
+    _mm512_mask_store_ps((void*)(dst+m*30+n*16),Nremmask,tmprem);
+  }
+}
+
+void gather_transpose_ps_16_16_16_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m) {
+    int n = 0;
+    const __m512 tmp =  _mm512_i32gather_ps(vindex, src+m+n*256, 4);
+    _mm512_store_ps((void*)(dst+m*16+n*16),tmp);
+  }
+}
+
+void gather_transpose_ps_16_18_18_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  const __mmask16 Nremmask = 0x0003;
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m) {
+    int n = 0;
+    const __m512 tmp =  _mm512_i32gather_ps(vindex, src+m+n*256, 4);
+    _mm512_store_ps((void*)(dst+m*18+n*16),tmp);
+    n = 1;
+    const __m512 tmprem =  _mm512_mask_i32gather_ps(_mm512_undefined(), Nremmask, vindex, src+m+n*256, 4);
+    _mm512_mask_store_ps((void*)(dst+m*18+n*16),Nremmask,tmprem);
+  }
+}
+
+void gather_transpose_ps_16_8_8_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(113,97,81,65,49,33,17,1,
+                                          112,96,80,64,48,32,16,0);
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 8; ++m) {
+    const __m512 tmprem =  _mm512_i32gather_ps(vindex, src+m*2, 4);
+    _mm512_store_ps((void*)(dst+m*16),tmprem);
+  }
+}
+
+void gather_transpose_ps_16_10_10_16(float *__restrict__ dst, const float *__restrict__ src) {
+  const __m512i vindex = _mm512_set_epi32(240,224,208,192,176,160,144,128,112,96,80,64,48,32,16,0);
+  const __mmask16 Nremmask = 0x03FF;
+  int m;
+  #pragma unroll_and_jam(4)
+  for(m = 0; m < 16; ++m) {
+    int n = 0;
+    const __m512 tmprem =  _mm512_mask_i32gather_ps(_mm512_undefined(), Nremmask, vindex, src+m+n*256, 4);
+    _mm512_mask_store_ps((void*)(dst+m*10+n*16),Nremmask,tmprem);
+  }
+}
+
+typedef void (*transposer)(float *__restrict__ dst, const float *__restrict__ src);
+
+transposer get_transposer(int M, int N, int ldD, int ldS) {
+  if(ldS != 16 || M != 16)
+    return 0;
+
+  if(ldD == 56 && N == 56)
+    return gather_transpose_ps_16_56_56_16;
+  if(ldD == 58 && N == 58)
+    return gather_transpose_ps_16_58_58_16;
+  if(ldD == 28 && N == 28)
+    return gather_transpose_ps_16_28_28_16;
+  if(ldD == 30 && N == 30)
+    return gather_transpose_ps_16_30_30_16;
+  if(ldD == 16 && N == 16)
+    return gather_transpose_ps_16_16_16_16;
+  if(ldD == 18 && N == 18)
+    return gather_transpose_ps_16_18_18_16;
+  if(ldD == 8 && N == 8)
+    return gather_transpose_ps_16_8_8_16;
+  if(ldD == 10 && N == 10)
+    return gather_transpose_ps_16_10_10_16;
+
+  return 0;
+}
+#endif //defined(__AVX_512F__)
 
 LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_convolve_st_upd_custom_custom(libxsmm_dnn_layer* handle, int start_thread, int tid)
 {

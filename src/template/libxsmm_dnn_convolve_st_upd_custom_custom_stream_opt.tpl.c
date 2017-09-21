@@ -92,6 +92,14 @@ libxsmm_xmatcopyfunction jitted_matzero = handle->matcopy_upd[1].xmatcopy;
 libxsmm_xmatcopyfunction jitted_matzero_weights = handle->matcopy_upd[2].xmatcopy;
 libxsmm_convfunction kernel = ( handle->trans_ofw_ifm == 0 || handle->ifmblock == 1 ) ? (libxsmm_convfunction)handle->code_upd[1].xconv.sconv : (libxsmm_convfunction)handle->code_upd[4].xconv.sconv;
 
+#if defined(__AVX512F__)
+transposer tp_func = get_transposer(handle->ifmblock, handle->ifwp, padded_w, handle->ifmblock);
+if(tp_func == 0) {
+  fprintf("Couldn't find transposer to match %d %d %d %d", handle->ifmblock, handle->ifwp, padded_w, handle->ifmblock);
+  exit(1);
+}
+#endif // defined(__AVX512F__)
+
 /* lazy barrier init */
 libxsmm_barrier_init(handle->barrier, ltid);
 
@@ -164,7 +172,7 @@ if (n_segments) {
               float *dst = &(LIBXSMM_VLA_ACCESS(5, tr_input_padded, img, ifm1, ij + handle->desc.pad_h, 0, 0 + handle->desc.pad_w, handle->blocksifm, padded_h, handle->ifmblock, padded_w));
               const float *src = &(LIBXSMM_VLA_ACCESS(5, input_nopad, img, ifm1, ij, 0, 0, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock));
               #if defined(__AVX512F__)
-              block_gather_transpose_ps(handle->ifmblock, handle->ifwp, dst, padded_w, src, handle->ifmblock);
+              tp_func(dst, src);
               #else
               for (ii=0; ii < handle->ifwp; ++ii) {
                 for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
@@ -181,7 +189,7 @@ if (n_segments) {
               float *dst = &(LIBXSMM_VLA_ACCESS(5, tr_input_nopad, img, ifm1, ij, 0, 0, handle->blocksifm, handle->ifhp, handle->ifmblock, handle->ifwp));
               const float *src = &(LIBXSMM_VLA_ACCESS(5, input_nopad, img, ifm1, ij, 0, 0, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock));
               #if defined(__AVX512F__)
-              block_gather_transpose_ps(handle->ifmblock, handle->ifwp, dst, handle->ifwp, src, handle->ifmblock);
+              tp_func(dst, src);
               #else
               for (ii=0; ii < handle->ifwp; ++ii) {
                 for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
