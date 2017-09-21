@@ -138,8 +138,9 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
   n_code_segments = 0;
   tmp_stream_index = 0;
 
-  mark_weight_init = (1) ? 1 : 0; /* TODO: Make this dependent on nt stores */
-  mark_weight_copy = (1) ? 1 : 0; /* TODO: Make this dependent on nt stores */
+  /* Skip WEIGHT_INIT and WEIGHT_COPY when kernel uses NT stores */
+  mark_weight_init = ( handle->ofh == 28 || handle->ofh == 56 ) ? 1 : 0;
+  mark_weight_copy = ( handle->ofh == 28 || handle->ofh == 56 ) ? 1 : 0;
 
   /* Perform a dryrun to compute the memory requirements of the stream of indices */
   for (img = my_img_start; img < my_img_end; img++) {
@@ -231,7 +232,14 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                       } else {
                         compute_indices[local_entries] =  ( ( ( ( ( (img *  handle->blocksifm) +  ifm1) * padded_h )  +  (ij_+kj)) * padded_w)  + (ii_ + ki) ) *  handle->ifmblock;
                       }
-                      compute_indices[local_entries+1] = ( ( (ofm1-ofmb) * handle->block_upd_ifm ) + (ifm1-ifmb) ) * handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock + kj * handle->desc.S *  handle->ifmblock *  handle->ofmblock + ki * handle->ifmblock *  handle->ofmblock;
+
+                      /* use different weights format if we can skip init and copy */
+                      if (mark_weight_init == 1 && mark_weight_copy == 1) {
+                          compute_indices[local_entries+1] = ( ( (ofm1-ofmb) * handle->block_upd_ifm ) + (ifm1-ifmb) ) * handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock + kj * handle->desc.S *  handle->ifmblock *  handle->ofmblock + ki * handle->ifmblock *  handle->ofmblock;
+                      } else {
+                          compute_indices[local_entries+1] = ( ( (ofm1 *  handle->blocksifm ) + ifm1 ) * handle->desc.R * handle->desc.S *  handle->ifmblock *  handle->ofmblock + kj * handle->desc.S *  handle->ifmblock *  handle->ofmblock + ki * handle->ifmblock *  handle->ofmblock ) * handle->desc.threads;
+                      }
+
                       compute_indices[local_entries+2] = ( ( ( ( ( (img *  handle->blocksofm) +  ofm1) *  handle->ofhp )  +  oj_ ) * handle->ofwp)  +  oi_ ) *  handle->ofmblock;
                       local_entries += 3;
 
@@ -301,7 +309,6 @@ for (ltid = 0; ltid < handle->desc.threads; ltid++)
                         ii_ = oi_*stride_w;
                         ij_ = oj_*stride_h;
 
-                        // TODO: Decide if weight_init actually needs an aux_index.  I don't think it does.
                         if (mark_weight_init == 1) {
                           if ( (ki == 0) && (kj == 0) && (oi__ == 0) && (oj_ == ojb) && (ojb == 0) ) {
                             encoded_code_segments[encoded_stream_index].aux_index = ( ( (ofm1-ofmb) * handle->block_upd_ifm ) + (ifm1-ifmb) ) * handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock;
